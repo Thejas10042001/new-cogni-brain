@@ -80,6 +80,9 @@ export const DocumentGallery: React.FC<DocumentGalleryProps> = ({
     );
 
     if (folderId) {
+      // Automatically select the new folder
+      onActiveFolderChange(folderId);
+      
       // If it's a main folder, automatically create sub-folders from predefined categories
       if (folderType === 'main') {
         const subCategories = PREDEFINED_CATEGORIES;
@@ -760,7 +763,7 @@ export const DocumentGallery: React.FC<DocumentGalleryProps> = ({
                       <div className="flex flex-col gap-1">
                          <span className="text-[8px] font-black uppercase text-slate-500 px-3 py-1 bg-slate-800 rounded-lg flex items-center gap-2">
                            <ICONS.Folder className="w-2 h-2" />
-                           {doc.folderId || "Miscellaneous"}
+                           {allFolders.find(f => f.id === doc.folderId)?.name || doc.category || "Miscellaneous"}
                          </span>
                          {doc.updatedAt && doc.updatedAt !== doc.timestamp && (
                            <span className="text-[7px] font-black text-indigo-500 px-1">Modified: {formatDate(doc.updatedAt)}</span>

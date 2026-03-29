@@ -308,7 +308,7 @@ export const fetchSimulationHistory = async (): Promise<any[]> => {
   }
 };
 
-export const saveDocumentToFirebase = async (name: string, content: string, type: string, folderId?: string): Promise<string | null> => {
+export const saveDocumentToFirebase = async (name: string, content: string, type: string, folderId?: string, category?: string): Promise<string | null> => {
   if (!db || !auth || !auth.currentUser) return null;
   const path = COLLECTION_NAME;
   try {
@@ -319,6 +319,7 @@ export const saveDocumentToFirebase = async (name: string, content: string, type
       content,
       type,
       folderId: folderId || null,
+      category: category || null,
       timestamp: now,
       updatedAt: now
     });

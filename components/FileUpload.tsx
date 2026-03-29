@@ -11,9 +11,10 @@ interface FileUploadProps {
   onFilesChange: React.Dispatch<React.SetStateAction<UploadedFile[]>>;
   files: UploadedFile[];
   onUploadSuccess?: () => void;
+  activeFolderId: string;
 }
 
-export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, files, onUploadSuccess }) => {
+export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, files, onUploadSuccess, activeFolderId }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [ocrProgress, setOcrProgress] = useState<number>(0);
   const [isCognitiveOcr, setIsCognitiveOcr] = useState<boolean>(false);
@@ -46,25 +47,51 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, files, on
           onStatusChange: (isOcr) => setIsCognitiveOcr(isOcr)
         });
 
-        // Categorize the document
-        const currentFolders = await fetchFoldersFromFirebase();
-        const folderNames = [...PREDEFINED_CATEGORIES, ...currentFolders.map(f => f.name)];
-        const categoryName = await categorizeDocument(file.name, text, folderNames);
+        // 1. Fetch all folders to understand the structure
+        const allFolders = await fetchFoldersFromFirebase();
         
-        // Find the folder ID
-        let targetFolderId: string | null = null;
-        if (PREDEFINED_CATEGORIES.includes(categoryName)) {
-          targetFolderId = categoryName;
-        } else {
-          const customFolder = currentFolders.find(f => f.name === categoryName);
-          if (customFolder) {
-            targetFolderId = customFolder.id;
-          } else {
-            targetFolderId = "Miscellaneous";
-          }
+        // 2. Identify the target main folder and its subfolders
+        let targetMainFolderId = activeFolderId;
+        const activeFolder = allFolders.find(f => f.id === activeFolderId);
+        
+        // If the active folder is a subfolder, we should look at its parent's subfolders for categorization
+        if (activeFolder && activeFolder.parentId) {
+          targetMainFolderId = activeFolder.parentId;
         }
 
-        const docId = await saveDocumentToFirebase(file.name, text, file.type, targetFolderId || undefined);
+        // 3. Get available subfolders for this main folder
+        // Subfolders can be real (in DB) or virtual (predefined)
+        const subFoldersForMain = allFolders.filter(f => f.parentId === targetMainFolderId);
+        const subFolderNames = [
+          ...PREDEFINED_CATEGORIES, 
+          ...subFoldersForMain.map(f => f.name)
+        ];
+
+        // 4. Categorize the document based on CONTENT
+        const categoryName = await categorizeDocument(file.name, text, subFolderNames);
+        
+        // 5. Find the final folder ID
+        let finalFolderId: string | null = null;
+        
+        // Check if it's a real subfolder in DB
+        const realSub = subFoldersForMain.find(f => f.name === categoryName);
+        if (realSub) {
+          finalFolderId = realSub.id;
+        } else if (PREDEFINED_CATEGORIES.includes(categoryName)) {
+          // It's a virtual subfolder
+          finalFolderId = `virtual-${targetMainFolderId}-${categoryName.replace(/\s+/g, '-')}`;
+        } else {
+          // Fallback to the active folder or Miscellaneous
+          finalFolderId = activeFolderId !== "Global Library" ? activeFolderId : "Miscellaneous";
+        }
+
+        const docId = await saveDocumentToFirebase(
+          file.name, 
+          text, 
+          file.type, 
+          finalFolderId || undefined,
+          categoryName
+        );
 
         onFilesChange(prev => prev.map(f => 
           f.name === file.name ? { ...f, id: docId || undefined, content: text, status: 'ready' } : f

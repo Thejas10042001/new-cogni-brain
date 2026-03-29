@@ -265,21 +265,23 @@ export async function categorizeDocument(fileName: string, content: string, avai
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const modelName = 'gemini-3-flash-preview';
   
-  const prompt = `Act as an Elite Sales Operations Analyst. 
-  Your goal is to categorize the following document into the most appropriate folder based on its content and filename.
-
+  const prompt = `Act as an Elite Sales Operations Analyst and Knowledge Management Expert. 
+  Your goal is to categorize the following document into the most appropriate sub-folder based PRIMARILY on its content.
+  
   FILENAME: ${fileName}
-  CONTENT PREVIEW (First 2000 chars):
-  ${content.substring(0, 2000)}
-
-  AVAILABLE FOLDERS:
+  CONTENT PREVIEW (First 6000 chars):
+  ${content.substring(0, 6000)}
+ 
+  AVAILABLE SUB-FOLDERS:
   ${availableFolders.join(', ')}
-
+ 
   DIRECTIVES:
-  1. Analyze the document's purpose, target audience, and subject matter.
-  2. Select the EXACT name of the most appropriate folder from the AVAILABLE FOLDERS list.
-  3. If no specific folder fits well, select "Miscellaneous".
-  4. Return ONLY the folder name.`;
+  1. DEEP CONTENT ANALYSIS: Analyze the document's core subject matter, technical depth, target audience, and business purpose.
+  2. CONTENT OVER FILENAME: The filename can be misleading. Prioritize the actual text content. If a file is named "notes.txt" but contains a technical architecture diagram description, categorize it under "Product" or "Technical".
+  3. SELECT EXACT MATCH: Select the EXACT name of the most appropriate folder from the AVAILABLE SUB-FOLDERS list.
+  4. NO HALLUCINATIONS: Do not suggest a folder name that is not in the list.
+  5. DEFAULT: If no specific folder fits well, select "Miscellaneous".
+  6. Return ONLY the folder name string.`;
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
