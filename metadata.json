@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: SPIKED AI | Cognitive Intelligence",
+  "description": "An elite cognitive intelligence brain simulation for enterprise sales strategy, objection handling, and verbal architecture mastery.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
