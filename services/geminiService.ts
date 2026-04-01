@@ -261,7 +261,7 @@ export async function analyzeVocalPersona(base64Audio: string, mimeType: string)
 }
 
 // Categorize a document into a folder
-export async function categorizeDocument(fileName: string, content: string, availableFolders: string[]): Promise<string> {
+export async function categorizeDocument(fileName: string, content: string, availableFolders: string[]): Promise<{ category: string; reasoning: string }> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const modelName = 'gemini-3-flash-preview';
   
@@ -271,29 +271,40 @@ export async function categorizeDocument(fileName: string, content: string, avai
   FILENAME: ${fileName}
   CONTENT PREVIEW (First 6000 chars):
   ${content.substring(0, 6000)}
- 
+  
   AVAILABLE SUB-FOLDERS:
   ${availableFolders.join(', ')}
- 
+  
   DIRECTIVES:
   1. DEEP CONTENT ANALYSIS: Analyze the document's core subject matter, technical depth, target audience, and business purpose.
-  2. CONTENT OVER FILENAME: The filename can be misleading. Prioritize the actual text content. If a file is named "notes.txt" but contains a technical architecture diagram description, categorize it under "Product" or "Technical".
-  3. SELECT EXACT MATCH: Select the EXACT name of the most appropriate folder from the AVAILABLE SUB-FOLDERS list.
-  4. NO HALLUCINATIONS: Do not suggest a folder name that is not in the list.
-  5. DEFAULT: If no specific folder fits well, select "Miscellaneous".
-  6. Return ONLY the folder name string.`;
+  2. CONTENT OVER FILENAME: The filename can be misleading. Prioritize the actual text content.
+  3. SELECT BEST FIT: Select the most appropriate folder from the AVAILABLE SUB-FOLDERS list.
+  4. SUGGEST NEW IF NEEDED: If NO provided sub-folder is a good fit, suggest a new, concise (1-3 words) sub-folder name that accurately describes the content.
+  5. REASONING: Provide a brief (1-2 sentences) explanation of why this category was chosen.
+
+  Return the result as a JSON object with the following structure:
+  {
+    "category": "Folder Name",
+    "reasoning": "Brief explanation"
+  }`;
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
       model: modelName,
       contents: prompt,
+      config: {
+        responseMimeType: 'application/json'
+      }
     }));
-    const suggestedFolder = response.text?.trim() || "Miscellaneous";
-    // Ensure the suggested folder is actually in the list, otherwise fallback
-    return availableFolders.includes(suggestedFolder) ? suggestedFolder : "Miscellaneous";
+    
+    const result = JSON.parse(response.text || '{}');
+    const suggestedFolder = result.category || "Miscellaneous";
+    const reasoning = result.reasoning || "Default categorization applied.";
+    
+    return { category: suggestedFolder, reasoning };
   } catch (error) {
     console.error("Categorization failed:", error);
-    return "Miscellaneous";
+    return { category: "Miscellaneous", reasoning: "Error during AI categorization process." };
   }
 }
 
@@ -1330,18 +1341,28 @@ export async function* streamSalesGPT(prompt: string, history: GPTMessage[], con
     { role: 'user', parts: [{ text: prompt }] }
   ];
 
-  const systemInstruction = `You are Sales GPT, an elite sales intelligence agent. 
+  const systemInstruction = `You are Sales GPT, an elite, high-precision sales intelligence agent. 
   
-  CORE MISSION: Provide high-impact sales intelligence.
+  CORE MISSION: Provide high-impact, strategic sales intelligence that "hits the nail on the head" every time. Do NOT hesitate, do NOT be vague. Provide definitive, actionable insights with detailed explanations.
   
-  GROUNDING RULES:
-  1. If GROUNDING DATA is provided below, prioritize it. 
-  2. If the user's question relates to specific data in the documents, use that data and cite the source.
-  3. If the question is general or the data isn't in the docs, do NOT refuse to answer. Instead, use your world-class general knowledge to provide a strategic, authoritative response.
+  COGNITIVE ANSWERING PROTOCOL:
+  1. GROUNDING: If GROUNDING DATA is provided below, prioritize it. Every claim must be grounded in facts or logical deduction.
+  2. NO HALLUCINATIONS: Do NOT invent data points, customer names, or specific metrics that are not present in the context. This is CRITICAL.
+  3. DEPTH: Provide a comprehensive and detailed explanation for every question. Explain the "why" and "how" behind your strategic insights.
+  4. REASONING: In the "reasoning" field, provide a brief internal monologue of your strategic thought process before arriving at the final answer.
+  5. CITATIONS: If the user's question relates to specific data in the documents, use that data and cite the source. Use inline markers like [1](citation:1), [2](citation:2) in the answer text to refer to the citations provided in the citations array.
   
-  FORMATTING: Use Markdown (bolding, lists, tables, headers) to make your response highly readable, structured, and professional.
+  FORMATTING: 
+  - Use Markdown (bolding, lists, headers) for high readability and visual impact.
+  - Use TABLES for structured data, comparisons, or metrics. This is CRITICAL for clarity.
+  - Keep responses professional, structured, and elite.
   
-  STYLE: Direct, authoritative, and strategic. No fluff.
+  STYLE: Direct, authoritative, and strategic. No fluff. No "I think" or "It seems". Use "The data shows", "The strategic move is", etc.
+  
+  OUTPUT FORMAT: Return a JSON object with:
+  - answer: string (The strategic response)
+  - reasoning: string (Your strategic thought process)
+  - citations: Array of { snippet: string, sourceFile: string, pageNumber?: string } (The specific document references used)
   
   ${context ? `--- DOCUMENT GROUNDING DATA ---
   ${context}
@@ -1353,7 +1374,27 @@ export async function* streamSalesGPT(prompt: string, history: GPTMessage[], con
       contents: contents,
       config: {
         systemInstruction: systemInstruction,
-        thinkingConfig: { thinkingBudget: 0 }
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            answer: { type: Type.STRING },
+            reasoning: { type: Type.STRING },
+            citations: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  snippet: { type: Type.STRING },
+                  sourceFile: { type: Type.STRING },
+                  pageNumber: { type: Type.STRING }
+                },
+                required: ["snippet", "sourceFile"]
+              }
+            }
+          },
+          required: ["answer", "reasoning", "citations"]
+        }
       }
     }));
 
@@ -1452,17 +1493,26 @@ export async function* streamDeepStudy(prompt: string, history: GPTMessage[], co
 
   const systemInstruction = `You are a world-class Strategic Research Lead performing a "Deep Study".
   
-  MISSION: Conduct an exhaustive, multi-layered analysis that goes far beyond obvious observations.
+  MISSION: Conduct an exhaustive, multi-layered analysis that goes far beyond obvious observations. "Hit the nail on the head" with every insight. Do NOT hesitate. Provide definitive, high-impact answers with exhaustive detail.
   
-  ANALYTICAL LAYERS:
-  1. DOCUMENT SYNTHESIS: Extract specific strategic pillars from the grounded context provided.
-  2. OUT-OF-THE-BOX THINKING: Infuse creative, non-obvious sales maneuvers and global market trends.
-  3. CUSTOMER PSYCHOLOGY: Analyze the situation from the CUSTOMER'S point of view (their fears, personal incentives, and organizational pressures).
-  4. STRATEGIC ROADMAP: Provide a step-by-step execution plan for the salesperson.
+  COGNITIVE ANALYSIS PROTOCOL:
+  1. DOCUMENT SYNTHESIS: Extract specific strategic pillars from the grounded context provided. Use inline markers like [1](citation:1), [2](citation:2) in the answer text to refer to the citations provided in the citations array.
+  2. NO HALLUCINATIONS: Do NOT invent data points or connections that are not logically supported by the context.
+  3. DEPTH: Provide a comprehensive and detailed explanation for every finding. Explain the strategic implications in depth.
+  4. OUT-OF-THE-BOX THINKING: Infuse creative, non-obvious sales maneuvers and global market trends.
+  5. CUSTOMER PSYCHOLOGY: Analyze the situation from the CUSTOMER'S point of view (their fears, personal incentives, and organizational pressures).
+  6. STRATEGIC ROADMAP: Provide a step-by-step execution plan for the salesperson.
   
-  FORMATTING: Use exhaustive Markdown formatting (headers, bullet points, bold text, and tables) to structure your deep analysis for maximum readability and impact.
+  FORMATTING: 
+  - Use exhaustive Markdown formatting (headers, bullet points, bold text).
+  - Use TABLES for structured data, comparisons, or metrics. This is CRITICAL for clarity.
+  - Structure your deep analysis for maximum readability and impact.
   
-  STYLE: Exhaustive, professional, academic but actionable.
+  STYLE: Exhaustive, professional, authoritative, and actionable. No fluff.
+  
+  OUTPUT FORMAT: Return a JSON object with:
+  - answer: string (The strategic response)
+  - citations: Array of { snippet: string, sourceFile: string, pageNumber?: string } (The specific document references used)
   
   ${context ? `--- GROUNDED DOCUMENT CONTEXT ---
   ${context}
@@ -1476,6 +1526,26 @@ export async function* streamDeepStudy(prompt: string, history: GPTMessage[], co
       contents: contents,
       config: {
         systemInstruction: systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            answer: { type: Type.STRING },
+            citations: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  snippet: { type: Type.STRING },
+                  sourceFile: { type: Type.STRING },
+                  pageNumber: { type: Type.STRING }
+                },
+                required: ["snippet", "sourceFile"]
+              }
+            }
+          },
+          required: ["answer", "citations"]
+        },
         thinkingConfig: { thinkingBudget: 32768 }
       }
     }));
@@ -1499,7 +1569,7 @@ export interface CognitiveSearchResult {
     buyerIncentive: string;
     strategicLever: string;
   };
-  citations: { snippet: string; source: string }[];
+  citations: { snippet: string; sourceFile: string }[];
   reasoningChain: {
     painPoint: string;
     capability: string;
@@ -1540,9 +1610,9 @@ export async function* performCognitiveSearchStream(
           type: Type.OBJECT,
           properties: {
             snippet: { type: Type.STRING },
-            source: { type: Type.STRING }
+            sourceFile: { type: Type.STRING }
           },
-          required: ["snippet", "source"]
+          required: ["snippet", "sourceFile"]
         }
       },
       reasoningChain: {
@@ -1571,8 +1641,14 @@ export async function* performCognitiveSearchStream(
       contents: prompt,
       config: {
         systemInstruction: `You are a Senior Cognitive Brain Strategist. 
-        Provide technical rigor and grounded depth in JSON. 
-        Inside the "answer" field, use rich Markdown formatting (bolding, lists, headers) to make the content highly structured and professional.`,
+        Provide technical rigor and grounded depth in JSON. "Hit the nail on the head" with every synthesis. Do NOT hesitate. Provide definitive, actionable intelligence with detailed explanations.
+        COGNITIVE SYNTHESIS PROTOCOL:
+        1. GROUNDING: Stick strictly to the provided context. Every insight must be traceable to the source.
+        2. NO HALLUCINATIONS: Do NOT invent or assume data points. If information is missing, identify it as a "Strategic Gap".
+        3. DEPTH: Provide a comprehensive and detailed explanation for every synthesis.
+        Inside the "answer" field, use rich Markdown formatting (bolding, lists, headers) to make the content highly structured and professional.
+        CRITICAL: Use TABLES for structured data, comparisons, or metrics.
+        CRITICAL: Use inline markers like [1](citation:1), [2](citation:2) in the answer text to refer to the citations provided in the citations array.`,
         responseMimeType: "application/json",
         responseSchema,
         thinkingConfig: { thinkingBudget: 32768 }
@@ -1831,4 +1907,50 @@ export async function analyzeSalesContext(filesContent: string, context: Meeting
     }));
     return safeJsonParse(response.text || "{}") as AnalysisResult;
   } catch (error: any) { throw new Error(`Analysis Failed: ${error.message}`); }
+}
+
+export async function generateFollowUpQuestions(
+  lastMessage: string,
+  history: GPTMessage[],
+  context?: string
+): Promise<string[]> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.API_KEY });
+  const modelName = 'gemini-3-flash-preview';
+
+  const historyStr = history.slice(-5).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
+
+  const prompt = `Based on the following AI response and the conversation history, generate 3 relevant, strategic follow-up questions that a user might want to ask to explore the topic deeper.
+  
+  CONVERSATION HISTORY:
+  ${historyStr}
+  
+  LAST AI RESPONSE:
+  ${lastMessage}
+  
+  ${context ? `STRATEGIC CONTEXT: ${context}` : ""}
+  
+  DIRECTIVES:
+  1. The questions should be concise and high-impact.
+  2. They should focus on strategic sales insights, ROI, risk, or implementation details.
+  3. Return ONLY a JSON array of 3 strings.
+  
+  Example: ["How does this impact the TCO over 3 years?", "What are the primary integration risks?", "Can we see a case study for a similar scale?"]`;
+
+  try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      }
+    }));
+    return safeJsonParse(response.text || "[]");
+  } catch (error) {
+    console.error("Follow-up generation failed:", error);
+    return [];
+  }
 }

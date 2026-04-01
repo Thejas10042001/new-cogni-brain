@@ -68,20 +68,35 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, files, on
         ];
 
         // 4. Categorize the document based on CONTENT
-        const categoryName = await categorizeDocument(file.name, text, subFolderNames);
+        const { category: categoryName, reasoning } = await categorizeDocument(file.name, text, subFolderNames);
         
         // 5. Find the final folder ID
         let finalFolderId: string | null = null;
         
         // Check if it's a real subfolder in DB
-        const realSub = subFoldersForMain.find(f => f.name === categoryName);
+        const realSub = subFoldersForMain.find(f => f.name.toLowerCase() === categoryName.toLowerCase());
         if (realSub) {
           finalFolderId = realSub.id;
-        } else if (PREDEFINED_CATEGORIES.includes(categoryName)) {
-          // It's a virtual subfolder
-          finalFolderId = `virtual-${targetMainFolderId}-${categoryName.replace(/\s+/g, '-')}`;
+        } else if (PREDEFINED_CATEGORIES.some(cat => cat.toLowerCase() === categoryName.toLowerCase())) {
+          // It's a virtual subfolder (only for Global Library or if not created yet)
+          const matchedCat = PREDEFINED_CATEGORIES.find(cat => cat.toLowerCase() === categoryName.toLowerCase()) || categoryName;
+          finalFolderId = `virtual-${targetMainFolderId}-${matchedCat.replace(/\s+/g, '-')}`;
         } else {
-          // Fallback to the active folder or Miscellaneous
+          // It's a NEW category suggested by AI - Create a REAL subfolder
+          // Only create if we have a real main folder (not Global Library)
+          if (targetMainFolderId !== "Global Library") {
+            const { saveFolderToFirebase } = await import('../services/firebaseService');
+            const newFolderId = await saveFolderToFirebase(categoryName, true, 'sub', targetMainFolderId);
+            finalFolderId = newFolderId;
+          } else {
+            // If in Global Library, create a new MAIN folder for this category?
+            // Or just use a virtual ID for now to avoid cluttering main folders
+            finalFolderId = `virtual-Global Library-${categoryName.replace(/\s+/g, '-')}`;
+          }
+        }
+
+        // Fallback if finalFolderId is still null
+        if (!finalFolderId) {
           finalFolderId = activeFolderId !== "Global Library" ? activeFolderId : "Miscellaneous";
         }
 
@@ -90,11 +105,19 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, files, on
           text, 
           file.type, 
           finalFolderId || undefined,
-          categoryName
+          categoryName,
+          reasoning
         );
 
         onFilesChange(prev => prev.map(f => 
-          f.name === file.name ? { ...f, id: docId || undefined, content: text, status: 'ready' } : f
+          f.name === file.name ? { 
+            ...f, 
+            id: docId || undefined, 
+            content: text, 
+            status: 'ready',
+            category: categoryName,
+            reasoning: reasoning
+          } : f
         ));
         
         onUploadSuccess?.();
@@ -223,12 +246,30 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, files, on
               )}
               
               {file.status === 'ready' && (
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
-                    Context Synced
-                  </span>
-                  <ICONS.Shield className="w-3 h-3 text-emerald-500 opacity-50" />
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                      Context Synced
+                    </span>
+                    <ICONS.Shield className="w-3 h-3 text-emerald-500 opacity-50" />
+                  </div>
+                  
+                  {file.category && (
+                    <div className="pt-3 border-t border-slate-800/50 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Categorization</span>
+                        <span className="px-2 py-0.5 bg-indigo-900/40 text-indigo-400 text-[7px] font-black rounded-md border border-indigo-500/20 uppercase tracking-widest">
+                          {file.category}
+                        </span>
+                      </div>
+                      {file.reasoning && (
+                        <p className="text-[8px] text-slate-500 italic leading-relaxed line-clamp-2">
+                          "{file.reasoning}"
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               

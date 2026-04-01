@@ -149,6 +149,7 @@ const COLLECTION_NAME = "cognitive_documents";
 const HISTORY_COLLECTION = "simulation_history";
 const CONTEXT_COLLECTION = "meeting_contexts";
 const FOLDERS_COLLECTION = "folders";
+const SALES_GPT_COLLECTION = "sales_gpt_history";
 
 // Helper to get user-isolated collection reference
 const getUserCollection = (subCollection: string) => {
@@ -161,6 +162,70 @@ export const getDbInstance = () => db;
 
 export const getFirebasePermissionError = () => internalPermissionError;
 export const clearFirebasePermissionError = () => { internalPermissionError = false; };
+
+// SalesGPT History Functions
+export const saveSalesGPTSession = async (session: { id?: string, title: string, messages: any[] }): Promise<string | null> => {
+  if (!db || !auth || !auth.currentUser) return null;
+  const path = SALES_GPT_COLLECTION;
+  try {
+    const userId = auth.currentUser.uid;
+    const sessionData = {
+      ...session,
+      userId,
+      timestamp: Timestamp.now()
+    };
+
+    if (session.id) {
+      await updateDoc(doc(getUserCollection(path), session.id), sessionData);
+      return session.id;
+    } else {
+      const docRef = await addDoc(getUserCollection(path), sessionData);
+      return docRef.id;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+    return null;
+  }
+};
+
+export const fetchSalesGPTSessions = async (): Promise<any[]> => {
+  if (!db || !auth || !auth.currentUser) return [];
+  const path = SALES_GPT_COLLECTION;
+  try {
+    const fifteenDaysAgo = new Date();
+    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+    
+    const q = query(
+      getUserCollection(path),
+      where("timestamp", ">=", Timestamp.fromDate(fifteenDaysAgo))
+    );
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        timestamp: data.timestamp?.toMillis() || Date.now()
+      };
+    }).sort((a, b) => b.timestamp - a.timestamp);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+    return [];
+  }
+};
+
+export const deleteSalesGPTSession = async (id: string): Promise<boolean> => {
+  if (!db || !auth || !auth.currentUser) return false;
+  const path = SALES_GPT_COLLECTION;
+  try {
+    await deleteDoc(doc(getUserCollection(path), id));
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    return false;
+  }
+};
 
 // Folder Helper Functions
 export const saveFolderToFirebase = async (
@@ -308,7 +373,14 @@ export const fetchSimulationHistory = async (): Promise<any[]> => {
   }
 };
 
-export const saveDocumentToFirebase = async (name: string, content: string, type: string, folderId?: string, category?: string): Promise<string | null> => {
+export const saveDocumentToFirebase = async (
+  name: string, 
+  content: string, 
+  type: string, 
+  folderId?: string, 
+  category?: string,
+  reasoning?: string
+): Promise<string | null> => {
   if (!db || !auth || !auth.currentUser) return null;
   const path = COLLECTION_NAME;
   try {
@@ -320,6 +392,7 @@ export const saveDocumentToFirebase = async (name: string, content: string, type
       type,
       folderId: folderId || null,
       category: category || null,
+      categorizationReasoning: reasoning || null,
       timestamp: now,
       updatedAt: now
     });
@@ -368,6 +441,8 @@ export const fetchDocumentsFromFirebase = async (): Promise<StoredDocument[]> =>
         content: data.content,
         type: data.type,
         folderId: data.folderId || null,
+        category: data.category || null,
+        categorizationReasoning: data.categorizationReasoning || null,
         timestamp: data.timestamp?.toMillis() || Date.now(),
         updatedAt: data.updatedAt?.toMillis() || data.timestamp?.toMillis() || Date.now()
       };
@@ -388,6 +463,8 @@ export const fetchDocumentsFromFirebase = async (): Promise<StoredDocument[]> =>
           content: data.content,
           type: data.type,
           folderId: data.folderId || null,
+          category: data.category || null,
+          categorizationReasoning: data.categorizationReasoning || null,
           timestamp: data.timestamp?.toMillis() || Date.now(),
           updatedAt: data.updatedAt?.toMillis() || data.timestamp?.toMillis() || Date.now()
         };
